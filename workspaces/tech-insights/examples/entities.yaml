@@ -24,6 +24,8 @@ apiVersion: backstage.io/v1alpha1
 kind: API
 metadata:
   name: example-grpc-api
+  annotations:
+    backstage.io/source-location: url:https://github.com/backstage/backstage/tree/master/catalog-info.yaml
 spec:
   type: grpc
   lifecycle: experimental

@@ -64,7 +64,7 @@ techInsights:
       cadence: '*/15 * * * *'
       lifecycle: { timeToLive: { weeks: 2 } }
     apiDefinitionFactRetriever:
-      cadence: '*/15 * * * *'
+      cadence: '*/1 * * * *'
       lifecycle: { timeToLive: { weeks: 2 } }
 #  See packages/backend/src/index.ts for programmatically registration
 #  factChecker:

@@ -15,11 +15,12 @@
  */
 import { JSON_RULE_ENGINE_CHECK_TYPE } from '@backstage-community/plugin-tech-insights-backend-module-jsonfc';
 import { CatalogClient } from '@backstage/catalog-client';
-import { Entity, ApiEntityV1alpha1 } from '@backstage/catalog-model';
+import { Entity, ApiEntityV1alpha1, ANNOTATION_SOURCE_LOCATION, parseLocationRef } from '@backstage/catalog-model';
 import {
   FactRetriever,
   FactRetrieverContext,
 } from '@backstage-community/plugin-tech-insights-node';
+import { LoggerService, UrlReaderService } from '@backstage/backend-plugin-api';
 
 export const checks = [
   {
@@ -55,6 +56,11 @@ export const checks = [
             operator: 'equal',
             value: true,
           },
+          {
+            fact: 'hasReadme',
+            operator: 'equal',
+            value: true,
+          },
         ],
       },
     },
@@ -71,8 +77,12 @@ export const apiDefinitionFactRetriever: FactRetriever = {
       type: 'boolean',
       description: 'The entity has a definition in spec',
     },
+    hasReadme: {
+      type: 'boolean',
+      description: 'The entity has a readme file',
+    },
   },
-  handler: async ({ discovery, auth }: FactRetrieverContext) => {
+  handler: async ({ discovery, auth, logger, urlReader }: FactRetrieverContext) => {
     const { token } = await auth.getPluginRequestToken({
       onBehalfOf: await auth.getOwnServiceCredentials(),
       targetPluginId: 'catalog',
@@ -85,19 +95,60 @@ export const apiDefinitionFactRetriever: FactRetriever = {
       { token },
     );
 
-    return entities.items.map((entity: Entity) => {
-      return {
-        entity: {
-          namespace: entity.metadata.namespace!,
-          kind: entity.kind,
-          name: entity.metadata.name,
-        },
-        facts: {
-          hasDefinition:
-            (entity as ApiEntityV1alpha1).spec?.definition &&
-            (entity as ApiEntityV1alpha1).spec?.definition.length > 0,
-        },
-      };
-    });
+    return await Promise.all(
+      entities.items.map(async (entity: Entity) => {
+        return {
+          entity: {
+            namespace: entity.metadata.namespace!,
+            kind: entity.kind,
+            name: entity.metadata.name,
+          },
+          facts: {
+            hasDefinition:
+              (entity as ApiEntityV1alpha1).spec?.definition &&
+              (entity as ApiEntityV1alpha1).spec?.definition.length > 0,
+            hasReadme: await checkReadmeFile(entity, logger, urlReader),
+          },
+        };
+      })
+    );
   },
 };
+
+async function checkReadmeFile(
+  entity: Entity,
+  logger: LoggerService,
+  reader: UrlReaderService,
+): Promise<boolean> {
+
+  const COMPONENT_LOCATIONS_REGEX = [
+    /\/catalog-info\.yaml$/,
+    /\%2Fcatalog-info\.yaml$/,
+    /\/\.devhub\/(?:dev\/|int\/|prod\/)?components\.yaml$/,
+    /\%2F\.devhub\%2F(?:dev\%2F|int\%2F|prod\%2F)?components\.yaml$/,
+  ];
+  
+  const sourceLocation =
+    entity.metadata.annotations?.[ANNOTATION_SOURCE_LOCATION];
+
+  if (!sourceLocation) {
+    return false;
+  }
+
+  try {
+    const sourceLocationRef = parseLocationRef(sourceLocation);
+    const readmeUrl = COMPONENT_LOCATIONS_REGEX.reduce(
+      (str, re) => str.replace(re, '/README.md'),
+      sourceLocationRef.target,
+    );
+    
+    logger.info(`->>> searching ${readmeUrl}`);
+    const response = await reader.search(readmeUrl);
+    logger.info(`->>> ${response.files?.length}, ${readmeUrl}`);
+    return response.files.length === 1;
+  
+  } catch (error) {
+    logger.info(`-->>> ${error}`);
+    return false
+  }
+}
